@@ -3,7 +3,8 @@ from docker import Client
 from os import path
 
 db_nodes = []
-db_first = None
+db_first = []
+db_lookup = {}
 
 client = Client()
 for container in client.containers():
@@ -12,50 +13,53 @@ for container in client.containers():
     ip = info['NetworkSettings']['IPAddress']
     if info['Config']['Image'] == 'riak':
         db_nodes.append((container_id, ip))
+        db_lookup[ip] = container_id
+
+if len(db_nodes) > 0:
+    db_first.append(db_nodes[0])
+    db_nodes = db_nodes[1:]
 
 env.roledefs = {
+    'db-main' : [value for key, value in db_first],
     'db': [value for key, value in db_nodes]
 }
 
 env.user = 'root'
 env.password = 'password'
 
-def riak_build_image():
+def build(number_nodes=2):
     local('docker build -t riak .')
+    for i in xrange(0, int(number_nodes)):
+        node = local("docker run -d riak", capture=True)
 
 @parallel
-def riak_bootstrap():
-    for i in xrange(0, 10):
-        local("docker run -d riak")
+@roles('db-main', 'db')
+def destroy():
+    client.kill(db_lookup[env.host_string])
 
 @parallel
-def riak_destroy():
-    for key, value in db_nodes:
-        client.kill(key)
-
-@roles('db')
-def riak_start():
+@roles('db-main', 'db')
+def start():
     run('sed -i s/127\.0\.0\.1/{0}/g /etc/riak/app.config'.format(env.host_string))
     run('sed -i s/127\.0\.0\.1/{0}/g /etc/riak/vm.args'.format(env.host_string))
-    run('/usr/sbin/riak start')
+    run('riak start')
 
+@parallel
 @roles('db')
-def riak_cluster():
-    global db_first
-    if not db_first:
-        db_first = env.host_string
-    else:
-        run('/usr/sbin/riak-admin cluster join riak@{0}'.format(db_first))
+def cluster():
+    node_id, node_ip = db_first[0]
+    run('riak-admin cluster join riak@{0}'.format(node_ip))
 
-@roles('db')
-def riak_commit():
-    global db_first
-    if db_first == env.host_string:
-        db_first = env.host_string
-        run('/usr/sbin/riak-admin cluster plan')
-        run('/usr/sbin/riak-admin cluster commit')
+@roles('db-main')
+def commit():
+    run('riak-admin cluster plan')
+    run('riak-admin cluster commit')
 
-def riak_setup():
-    execute(riak_start)
-    execute(riak_cluster)
-    execute(riak_commit)
+def setup():
+    execute(start)
+    execute(cluster)
+    execute(commit)
+
+@roles('db-main')
+def status():
+    run('riak-admin status')
