@@ -5,22 +5,29 @@
 FROM ubuntu:12.04
 MAINTAINER Werner R. Mendizabal "werner.mendizabal@gmail.com"
 
-# make sure the package repository is up to date
-RUN echo "deb http://archive.ubuntu.com/ubuntu precise main universe" > /etc/apt/sources.list
-RUN apt-get update
-
-RUN apt-get install -y openssh-server curl
-RUN curl http://apt.basho.com/gpg/basho.apt.key | apt-key add -
-
-RUN bash -c "echo deb http://apt.basho.com precise main > /etc/apt/sources.list.d/basho.list"
-RUN apt-get update
-
 ENV DEBIAN_FRONTEND noninteractive
-RUN apt-get install -y -q riak || true
-RUN mkdir /var/run/sshd
-RUN echo 'root:password' | chpasswd
 
-EXPOSE 22 8087 8098
+RUN apt-get update
 
-#CMD /usr/sbin/riak start && tail -f /var/log/riak/console.log
-CMD /usr/sbin/sshd -D
+RUN apt-get install -y curl
+
+RUN curl https://packagecloud.io/gpg.key | apt-key add -
+
+RUN apt-get install -y apt-transport-https
+
+ENV FILENAME /etc/apt/sources.list.d/basho.list
+ENV OS ubuntu
+ENV DIST precise
+ENV PACKAGE_CLOUD_RIAK_DIR https://packagecloud.io/install/repositories/basho/riak
+
+RUN curl "${PACKAGE_CLOUD_RIAK_DIR}/config_file.list?os=${OS}&dist=${DIST}&name=$(hostname -f)" > $FILENAME
+
+RUN apt-get update
+
+RUN apt-get install -y logrotate riak
+
+ADD files/run.sh /
+
+EXPOSE 8087 8098
+
+CMD ./run.sh
